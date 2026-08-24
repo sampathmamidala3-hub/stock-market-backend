@@ -12,15 +12,31 @@ const app = express();
 
 app.use(
   cors({
-    origin: "http://localhost:5173",
+    origin: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: false,
   })
 );
 
 app.use(express.json());
 
 app.get("/", (req, res) => {
-  res.json({
+  res.status(200).json({
     message: "CHARANAMS CONSTRUCTIONS backend is running",
+  });
+});
+
+app.get("/api", (req, res) => {
+  res.status(200).json({
+    message: "CHARANAMS CONSTRUCTIONS API is running",
+  });
+});
+
+app.get("/api/health", (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: "Backend is healthy",
   });
 });
 
@@ -34,11 +50,17 @@ mongoose
   .then(() => {
     console.log("MongoDB Atlas connected successfully");
 
-    app.listen(PORT, () => {
-      console.log(`Backend running on http://localhost:${PORT}`);
-    });
+    if (process.env.NODE_ENV !== "production") {
+      app.listen(PORT, () => {
+        console.log(
+          `Backend running on http://localhost:${PORT}`
+        );
+      });
+    }
   })
   .catch((error) => {
     console.error("MongoDB connection failed:");
     console.error(error.message);
   });
+
+module.exports = app;
