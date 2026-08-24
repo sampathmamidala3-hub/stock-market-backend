@@ -1,21 +1,19 @@
 {
-  "name": "library-management-backend",
+  "name": "charanams-constructions-backend",
   "version": "1.0.0",
-  "description": "Library Management System Backend",
+  "description": "CHARANAMS CONSTRUCTIONS backend",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js"
   },
-  "author": "",
-  "license": "ISC",
   "dependencies": {
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
-    "mongoose": "^9.9.1"
+    "mongoose": "^8.24.4"
   },
   "devDependencies": {
-    "nodemon": "^3.1.14"
+    "nodemon": "^3.0.0"
   }
 }

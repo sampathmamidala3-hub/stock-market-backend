@@ -1,60 +1,44 @@
 const express = require("express");
+const mongoose = require("mongoose");
 const cors = require("cors");
 const dotenv = require("dotenv");
 
-const connectDB = require("./config/db");
+const appointmentRoutes = require("./routes/appointmentRoutes");
+const ratingRoutes = require("./routes/ratingRoutes");
 
-const bookRoutes = require("./routes/bookRoutes");
-const memberRoutes = require("./routes/memberRoutes");
-const transactionRoutes = require("./routes/transactionRoutes");
-const dashboardRoutes = require("./routes/dashboardRoutes");
-
-// Load environment variables
 dotenv.config();
 
 const app = express();
 
-// =========================================
-// MIDDLEWARE
-// =========================================
+app.use(
+  cors({
+    origin: "http://localhost:5173",
+  })
+);
 
-// Allow requests from frontend
-app.use(cors());
-
-// Parse JSON requests
 app.use(express.json());
-
-// =========================================
-// DATABASE
-// =========================================
-
-connectDB();
-
-// =========================================
-// TEST ROUTE
-// =========================================
 
 app.get("/", (req, res) => {
   res.json({
-    message: "Library Management System API is running",
+    message: "CHARANAMS CONSTRUCTIONS backend is running",
   });
 });
 
-// =========================================
-// API ROUTES
-// =========================================
-
-app.use("/api/books", bookRoutes);
-app.use("/api/members", memberRoutes);
-app.use("/api/transactions", transactionRoutes);
-app.use("/api/dashboard", dashboardRoutes);
-
-// =========================================
-// SERVER
-// =========================================
+app.use("/api/appointments", appointmentRoutes);
+app.use("/api/ratings", ratingRoutes);
 
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+mongoose
+  .connect(process.env.MONGODB_URI)
+  .then(() => {
+    console.log("MongoDB Atlas connected successfully");
+
+    app.listen(PORT, () => {
+      console.log(`Backend running on http://localhost:${PORT}`);
+    });
+  })
+  .catch((error) => {
+    console.error("MongoDB connection failed:");
+    console.error(error.message);
+  });
