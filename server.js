@@ -1,120 +1,1002 @@
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
-const dotenv = require("dotenv");
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+require("dotenv").config();
 
-const appointmentRoutes = require("./routes/appointmentRoutes");
-const ratingRoutes = require("./routes/ratingRoutes");
-
-dotenv.config();
+const Stock = require("./models/stock");
+const Trade = require("./models/trade");
+const User = require("./models/user");
 
 const app = express();
 
+// =====================================================
+// JWT SECRET
+// =====================================================
+
+const JWT_SECRET =
+  process.env.JWT_SECRET || "trade_tracker_secret_2026";
+
+// =====================================================
+// MIDDLEWARE
+// =====================================================
+
 app.use(
   cors({
-    origin: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
+    origin: "http://localhost:5173",
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+    ],
   })
 );
 
 app.use(express.json());
 
-let isConnected = false;
+app.use(
+  express.urlencoded({
+    extended: true,
+  })
+);
 
-async function connectDB() {
-  if (isConnected && mongoose.connection.readyState === 1) {
-    return;
-  }
+// =====================================================
+// AUTHENTICATION MIDDLEWARE
+// =====================================================
 
-  if (!process.env.MONGODB_URI) {
-    throw new Error("MONGODB_URI is not configured");
-  }
-
-  await mongoose.connect(process.env.MONGODB_URI);
-
-  isConnected = true;
-  console.log("MongoDB Atlas connected successfully");
-}
-
-app.get("/", async (req, res) => {
+const authenticateToken = (req, res, next) => {
   try {
-    await connectDB();
+    const authHeader = req.headers.authorization;
 
-    res.status(200).json({
-      message: "CHARANAMS CONSTRUCTIONS backend is running",
-    });
+    if (!authHeader) {
+      return res.status(401).json({
+        success: false,
+        message: "Authentication required",
+      });
+    }
+
+    if (!authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid authorization format",
+      });
+    }
+
+    const token = authHeader.split(" ")[1];
+
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid authentication token",
+      });
+    }
+
+    const decoded = jwt.verify(
+      token,
+      JWT_SECRET
+    );
+
+    req.user = decoded;
+
+    next();
+
   } catch (error) {
-    res.status(500).json({
-      message: "Database connection failed",
-      error: error.message,
+    console.log("AUTH ERROR:", error.message);
+
+    return res.status(401).json({
+      success: false,
+      message: "Invalid or expired token",
     });
   }
+};
+
+// =====================================================
+// TEST ROUTE
+// =====================================================
+
+app.get("/", (req, res) => {
+  res.json({
+    success: true,
+    message: "Stock Market API is running 🚀",
+  });
 });
 
-app.get("/api", async (req, res) => {
+// =====================================================
+// REGISTER
+// =====================================================
+
+app.post("/register", async (req, res) => {
   try {
-    await connectDB();
+    const {
+      name,
+      email,
+      password,
+    } = req.body;
 
-    res.status(200).json({
-      message: "CHARANAMS CONSTRUCTIONS API is running",
-    });
-  } catch (error) {
-    res.status(500).json({
-      message: "Database connection failed",
-      error: error.message,
-    });
-  }
-});
+    // VALIDATION
 
-app.get("/api/health", async (req, res) => {
-  try {
-    await connectDB();
+    if (!name || !email || !password) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Name, email and password are required",
+      });
+    }
 
-    res.status(200).json({
+    if (password.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Password must be at least 6 characters",
+      });
+    }
+
+    const cleanEmail =
+      email.trim().toLowerCase();
+
+    // CHECK EXISTING USER
+
+    const existingUser =
+      await User.findOne({
+        email: cleanEmail,
+      });
+
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        message: "User already exists",
+      });
+    }
+
+    // HASH PASSWORD
+
+    const hashedPassword =
+      await bcrypt.hash(
+        password,
+        10
+      );
+
+    // CREATE USER
+
+    const user =
+      await User.create({
+        name: name.trim(),
+        email: cleanEmail,
+        password: hashedPassword,
+      });
+
+    res.status(201).json({
       success: true,
-      message: "Backend is healthy",
-      database: "connected",
+      message:
+        "Registration successful",
+
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+      },
     });
+
   } catch (error) {
+    console.log(
+      "REGISTER ERROR:",
+      error
+    );
+
     res.status(500).json({
       success: false,
-      message: "Backend database connection failed",
+      message: "Registration failed",
       error: error.message,
     });
   }
 });
 
-app.use("/api/appointments", async (req, res, next) => {
+// =====================================================
+// LOGIN
+// =====================================================
+
+app.post("/login", async (req, res) => {
   try {
-    await connectDB();
-    next();
+    const {
+      email,
+      password,
+    } = req.body;
+
+    // VALIDATION
+
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Email and password are required",
+      });
+    }
+
+    const cleanEmail =
+      email.trim().toLowerCase();
+
+    // FIND USER
+
+    const user =
+      await User.findOne({
+        email: cleanEmail,
+      });
+
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message:
+          "Invalid email or password",
+      });
+    }
+
+    // CHECK PASSWORD
+
+    const passwordMatch =
+      await bcrypt.compare(
+        password,
+        user.password
+      );
+
+    if (!passwordMatch) {
+      return res.status(401).json({
+        success: false,
+        message:
+          "Invalid email or password",
+      });
+    }
+
+    // CREATE JWT
+
+    const token =
+      jwt.sign(
+        {
+          userId: user._id.toString(),
+          email: user.email,
+        },
+        JWT_SECRET,
+        {
+          expiresIn: "7d",
+        }
+      );
+
+    res.json({
+      success: true,
+      message: "Login successful",
+
+      token,
+
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+      },
+    });
+
   } catch (error) {
+    console.log(
+      "LOGIN ERROR:",
+      error
+    );
+
     res.status(500).json({
-      message: "Database connection failed",
+      success: false,
+      message: "Login failed",
       error: error.message,
     });
   }
-}, appointmentRoutes);
+});
 
-app.use("/api/ratings", async (req, res, next) => {
-  try {
-    await connectDB();
-    next();
-  } catch (error) {
-    res.status(500).json({
-      message: "Database connection failed",
-      error: error.message,
+// =====================================================
+// CHECK CURRENT USER
+// =====================================================
+
+app.get(
+  "/me",
+  authenticateToken,
+  async (req, res) => {
+    try {
+      const user =
+        await User.findById(
+          req.user.userId
+        ).select("-password");
+
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: "User not found",
+        });
+      }
+
+      res.json({
+        success: true,
+        user,
+      });
+
+    } catch (error) {
+      console.log(
+        "ME ERROR:",
+        error
+      );
+
+      res.status(500).json({
+        success: false,
+        message:
+          "Failed to get user",
+      });
+    }
+  }
+);
+
+// =====================================================
+// ADD STOCK
+// =====================================================
+
+app.post(
+  "/add-stock",
+  authenticateToken,
+  async (req, res) => {
+    try {
+      const {
+        symbol,
+        companyName,
+        price,
+        quantity,
+        sector,
+      } = req.body;
+
+      if (!symbol) {
+        return res.status(400).json({
+          success: false,
+          message: "Stock symbol is required",
+        });
+      }
+
+      const stock =
+        await Stock.create({
+          userId: req.user.userId,
+
+          symbol,
+
+          companyName,
+
+          price: Number(price),
+
+          quantity: Number(quantity),
+
+          sector,
+        });
+
+      res.status(201).json({
+        success: true,
+        message:
+          "Stock added successfully",
+        stock,
+      });
+
+    } catch (error) {
+      console.log(
+        "ADD STOCK ERROR:",
+        error
+      );
+
+      res.status(500).json({
+        success: false,
+        message:
+          "Failed to add stock",
+        error: error.message,
+      });
+    }
+  }
+);
+
+// =====================================================
+// GET USER STOCKS
+// =====================================================
+
+app.get(
+  "/stocks",
+  authenticateToken,
+  async (req, res) => {
+    try {
+      const stocks =
+        await Stock.find({
+          userId: req.user.userId,
+        }).sort({
+          createdAt: -1,
+        });
+
+      res.json(stocks);
+
+    } catch (error) {
+      console.log(
+        "GET STOCK ERROR:",
+        error
+      );
+
+      res.status(500).json({
+        success: false,
+        message:
+          "Failed to fetch stocks",
+        error: error.message,
+      });
+    }
+  }
+);
+
+// =====================================================
+// ADD TRADE
+// =====================================================
+
+app.post(
+  "/add-trade",
+  authenticateToken,
+  async (req, res) => {
+    try {
+      console.log("");
+      console.log(
+        "================================"
+      );
+      console.log("NEW TRADE");
+      console.log(
+        "USER:",
+        req.user.userId
+      );
+      console.log(
+        "================================"
+      );
+
+      console.log(req.body);
+
+      const {
+        stock,
+        type,
+        entry,
+        exit,
+        quantity,
+        date,
+        charges,
+        investment,
+        pnl,
+        percentage,
+        notes,
+      } = req.body;
+
+      // VALIDATION
+
+      if (!stock) {
+        return res.status(400).json({
+          success: false,
+          message: "Stock is required",
+        });
+      }
+
+      if (!type) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Trade type is required",
+        });
+      }
+
+      if (
+        entry === undefined ||
+        entry === ""
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Entry price is required",
+        });
+      }
+
+      if (
+        exit === undefined ||
+        exit === ""
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Exit price is required",
+        });
+      }
+
+      if (
+        quantity === undefined ||
+        quantity === ""
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Quantity is required",
+        });
+      }
+
+      if (!date) {
+        return res.status(400).json({
+          success: false,
+          message: "Date is required",
+        });
+      }
+
+      // NUMBERS
+
+      const entryNumber =
+        Number(entry);
+
+      const exitNumber =
+        Number(exit);
+
+      const quantityNumber =
+        Number(quantity);
+
+      // CALCULATE PNL
+
+      const calculatedPnl =
+        (exitNumber - entryNumber) *
+        quantityNumber;
+
+      // CALCULATE PERCENTAGE
+
+      const calculatedPercentage =
+        entryNumber !== 0
+          ? (
+              (exitNumber -
+                entryNumber) /
+              entryNumber
+            ) * 100
+          : 0;
+
+      // CREATE TRADE
+
+      const trade =
+        new Trade({
+          userId:
+            req.user.userId,
+
+          stock:
+            String(stock),
+
+          type:
+            String(type),
+
+          entry:
+            entryNumber,
+
+          exit:
+            exitNumber,
+
+          quantity:
+            quantityNumber,
+
+          date:
+            new Date(date),
+
+          charges:
+            charges === "" ||
+            charges === undefined
+              ? 0
+              : Number(charges),
+
+          notes:
+            notes || "",
+
+          investment:
+            investment === "" ||
+            investment === undefined
+              ? entryNumber *
+                quantityNumber
+              : Number(investment),
+
+          pnl:
+            pnl === "" ||
+            pnl === undefined
+              ? calculatedPnl
+              : Number(pnl),
+
+          percentage:
+            percentage === "" ||
+            percentage === undefined
+              ? calculatedPercentage
+              : Number(percentage),
+        });
+
+      const savedTrade =
+        await trade.save();
+
+      console.log(
+        "TRADE SAVED:",
+        savedTrade._id
+      );
+
+      res.status(201).json({
+        success: true,
+
+        message:
+          "Trade added successfully",
+
+        trade:
+          savedTrade,
+      });
+
+    } catch (error) {
+      console.log("");
+      console.log(
+        "================================"
+      );
+      console.log(
+        "ADD TRADE ERROR"
+      );
+      console.log(
+        "================================"
+      );
+      console.log(error);
+
+      res.status(500).json({
+        success: false,
+        message:
+          "Failed to add trade",
+        error: error.message,
+      });
+    }
+  }
+);
+
+// =====================================================
+// GET USER TRADES
+// =====================================================
+
+app.get(
+  "/trades",
+  authenticateToken,
+  async (req, res) => {
+    try {
+      const trades =
+        await Trade.find({
+          userId: req.user.userId,
+        }).sort({
+          createdAt: -1,
+        });
+
+      res.status(200).json(
+        trades
+      );
+
+    } catch (error) {
+      console.log(
+        "GET TRADES ERROR:",
+        error
+      );
+
+      res.status(500).json({
+        success: false,
+        message:
+          "Failed to fetch trades",
+        error: error.message,
+      });
+    }
+  }
+);
+
+// =====================================================
+// GET SINGLE USER TRADE
+// =====================================================
+
+app.get(
+  "/trade/:id",
+  authenticateToken,
+  async (req, res) => {
+    try {
+      const {
+        id,
+      } = req.params;
+
+      if (
+        !mongoose.Types.ObjectId.isValid(
+          id
+        )
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Invalid trade ID",
+        });
+      }
+
+      const trade =
+        await Trade.findOne({
+          _id: id,
+          userId:
+            req.user.userId,
+        });
+
+      if (!trade) {
+        return res.status(404).json({
+          success: false,
+          message:
+            "Trade not found",
+        });
+      }
+
+      res.json({
+        success: true,
+        trade,
+      });
+
+    } catch (error) {
+      console.log(
+        "GET SINGLE TRADE ERROR:",
+        error
+      );
+
+      res.status(500).json({
+        success: false,
+        message:
+          "Failed to fetch trade",
+        error: error.message,
+      });
+    }
+  }
+);
+
+// =====================================================
+// DELETE USER TRADE
+// =====================================================
+
+app.delete(
+  "/delete-trade/:id",
+  authenticateToken,
+  async (req, res) => {
+    try {
+      const {
+        id,
+      } = req.params;
+
+      if (
+        !mongoose.Types.ObjectId.isValid(
+          id
+        )
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Invalid trade ID",
+        });
+      }
+
+      const deletedTrade =
+        await Trade.findOneAndDelete({
+          _id: id,
+
+          userId:
+            req.user.userId,
+        });
+
+      if (!deletedTrade) {
+        return res.status(404).json({
+          success: false,
+          message:
+            "Trade not found",
+        });
+      }
+
+      console.log(
+        "TRADE DELETED:",
+        deletedTrade._id
+      );
+
+      res.status(200).json({
+        success: true,
+        message:
+          "Trade deleted successfully",
+
+        trade:
+          deletedTrade,
+      });
+
+    } catch (error) {
+      console.log(
+        "DELETE ERROR:",
+        error
+      );
+
+      res.status(500).json({
+        success: false,
+        message:
+          "Failed to delete trade",
+        error: error.message,
+      });
+    }
+  }
+);
+
+// =====================================================
+// DELETE ALL USER TRADES
+// =====================================================
+
+app.delete(
+  "/delete-all-trades",
+  authenticateToken,
+  async (req, res) => {
+    try {
+      const result =
+        await Trade.deleteMany({
+          userId:
+            req.user.userId,
+        });
+
+      res.status(200).json({
+        success: true,
+
+        message:
+          "All your trades deleted successfully",
+
+        deletedCount:
+          result.deletedCount,
+      });
+
+    } catch (error) {
+      console.log(
+        "DELETE ALL ERROR:",
+        error
+      );
+
+      res.status(500).json({
+        success: false,
+        message:
+          "Failed to delete all trades",
+        error: error.message,
+      });
+    }
+  }
+);
+
+// =====================================================
+// UPDATE USER TRADE
+// =====================================================
+
+app.put(
+  "/update-trade/:id",
+  authenticateToken,
+  async (req, res) => {
+    try {
+      const {
+        id,
+      } = req.params;
+
+      if (
+        !mongoose.Types.ObjectId.isValid(
+          id
+        )
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Invalid trade ID",
+        });
+      }
+
+      const updatedTrade =
+        await Trade.findOneAndUpdate(
+          {
+            _id: id,
+
+            userId:
+              req.user.userId,
+          },
+
+          req.body,
+
+          {
+            new: true,
+            runValidators: true,
+          }
+        );
+
+      if (!updatedTrade) {
+        return res.status(404).json({
+          success: false,
+          message:
+            "Trade not found",
+        });
+      }
+
+      res.json({
+        success: true,
+
+        message:
+          "Trade updated successfully",
+
+        trade:
+          updatedTrade,
+      });
+
+    } catch (error) {
+      console.log(
+        "UPDATE ERROR:",
+        error
+      );
+
+      res.status(500).json({
+        success: false,
+        message:
+          "Failed to update trade",
+        error: error.message,
+      });
+    }
+  }
+);
+
+// =====================================================
+// 404 ROUTE
+// =====================================================
+
+app.use(
+  (req, res) => {
+    res.status(404).json({
+      success: false,
+
+      message:
+        `Route not found: ${req.method} ${req.originalUrl}`,
     });
   }
-}, ratingRoutes);
+);
 
-if (process.env.NODE_ENV !== "production") {
-  const PORT = process.env.PORT || 5000;
+// =====================================================
+// MONGODB
+// =====================================================
 
-  app.listen(PORT, () => {
-    console.log(`Backend running on http://localhost:${PORT}`);
-  });
+if (!process.env.MONGODB_URI) {
+  console.log(
+    "❌ MONGODB_URI is missing in .env"
+  );
+
+  process.exit(1);
 }
 
-module.exports = app;
+mongoose
+  .connect(
+    process.env.MONGODB_URI
+  )
+
+  .then(() => {
+    console.log("");
+
+    console.log(
+      "========================================"
+    );
+
+    console.log(
+      "✅ MongoDB Connected Successfully"
+    );
+
+    console.log(
+      "========================================"
+    );
+
+    app.listen(
+      5000,
+      () => {
+        console.log(
+          "🚀 Server running at:"
+        );
+
+        console.log(
+          "http://localhost:5000"
+        );
+
+        console.log(
+          "========================================"
+        );
+      }
+    );
+  })
+
+  .catch((error) => {
+    console.log(
+      "❌ MongoDB Connection Failed"
+    );
+
+    console.log(error);
+  });
