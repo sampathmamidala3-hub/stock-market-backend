@@ -24,8 +24,8 @@ const JWT_SECRET =
 
 app.use(
   cors({
-    origin: "http://localhost:5173",
-    methods: ["GET", "POST", "PUT", "DELETE"],
+    origin: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: [
       "Content-Type",
       "Authorization",
@@ -40,6 +40,24 @@ app.use(
     extended: true,
   })
 );
+
+// =====================================================
+// MONGODB CONNECTION
+// =====================================================
+
+if (!process.env.MONGODB_URI) {
+  console.log("❌ MONGODB_URI is missing");
+} else {
+  mongoose
+    .connect(process.env.MONGODB_URI)
+    .then(() => {
+      console.log("✅ MongoDB Connected Successfully");
+    })
+    .catch((error) => {
+      console.log("❌ MongoDB Connection Failed");
+      console.log(error);
+    });
+}
 
 // =====================================================
 // AUTHENTICATION MIDDLEWARE
@@ -80,9 +98,11 @@ const authenticateToken = (req, res, next) => {
     req.user = decoded;
 
     next();
-
   } catch (error) {
-    console.log("AUTH ERROR:", error.message);
+    console.log(
+      "AUTH ERROR:",
+      error.message
+    );
 
     return res.status(401).json({
       success: false,
@@ -114,8 +134,6 @@ app.post("/register", async (req, res) => {
       password,
     } = req.body;
 
-    // VALIDATION
-
     if (!name || !email || !password) {
       return res.status(400).json({
         success: false,
@@ -135,8 +153,6 @@ app.post("/register", async (req, res) => {
     const cleanEmail =
       email.trim().toLowerCase();
 
-    // CHECK EXISTING USER
-
     const existingUser =
       await User.findOne({
         email: cleanEmail,
@@ -149,15 +165,11 @@ app.post("/register", async (req, res) => {
       });
     }
 
-    // HASH PASSWORD
-
     const hashedPassword =
       await bcrypt.hash(
         password,
         10
       );
-
-    // CREATE USER
 
     const user =
       await User.create({
@@ -168,8 +180,7 @@ app.post("/register", async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message:
-        "Registration successful",
+      message: "Registration successful",
 
       user: {
         id: user._id,
@@ -177,7 +188,6 @@ app.post("/register", async (req, res) => {
         email: user.email,
       },
     });
-
   } catch (error) {
     console.log(
       "REGISTER ERROR:",
@@ -203,8 +213,6 @@ app.post("/login", async (req, res) => {
       password,
     } = req.body;
 
-    // VALIDATION
-
     if (!email || !password) {
       return res.status(400).json({
         success: false,
@@ -215,8 +223,6 @@ app.post("/login", async (req, res) => {
 
     const cleanEmail =
       email.trim().toLowerCase();
-
-    // FIND USER
 
     const user =
       await User.findOne({
@@ -230,8 +236,6 @@ app.post("/login", async (req, res) => {
           "Invalid email or password",
       });
     }
-
-    // CHECK PASSWORD
 
     const passwordMatch =
       await bcrypt.compare(
@@ -247,15 +251,18 @@ app.post("/login", async (req, res) => {
       });
     }
 
-    // CREATE JWT
-
     const token =
       jwt.sign(
         {
-          userId: user._id.toString(),
-          email: user.email,
+          userId:
+            user._id.toString(),
+
+          email:
+            user.email,
         },
+
         JWT_SECRET,
+
         {
           expiresIn: "7d",
         }
@@ -273,7 +280,6 @@ app.post("/login", async (req, res) => {
         email: user.email,
       },
     });
-
   } catch (error) {
     console.log(
       "LOGIN ERROR:",
@@ -313,7 +319,6 @@ app.get(
         success: true,
         user,
       });
-
     } catch (error) {
       console.log(
         "ME ERROR:",
@@ -349,32 +354,37 @@ app.post(
       if (!symbol) {
         return res.status(400).json({
           success: false,
-          message: "Stock symbol is required",
+          message:
+            "Stock symbol is required",
         });
       }
 
       const stock =
         await Stock.create({
-          userId: req.user.userId,
+          userId:
+            req.user.userId,
 
           symbol,
 
           companyName,
 
-          price: Number(price),
+          price:
+            Number(price),
 
-          quantity: Number(quantity),
+          quantity:
+            Number(quantity),
 
           sector,
         });
 
       res.status(201).json({
         success: true,
+
         message:
           "Stock added successfully",
+
         stock,
       });
-
     } catch (error) {
       console.log(
         "ADD STOCK ERROR:",
@@ -385,7 +395,9 @@ app.post(
         success: false,
         message:
           "Failed to add stock",
-        error: error.message,
+
+        error:
+          error.message,
       });
     }
   }
@@ -402,13 +414,13 @@ app.get(
     try {
       const stocks =
         await Stock.find({
-          userId: req.user.userId,
+          userId:
+            req.user.userId,
         }).sort({
           createdAt: -1,
         });
 
       res.json(stocks);
-
     } catch (error) {
       console.log(
         "GET STOCK ERROR:",
@@ -419,7 +431,9 @@ app.get(
         success: false,
         message:
           "Failed to fetch stocks",
-        error: error.message,
+
+        error:
+          error.message,
       });
     }
   }
@@ -463,12 +477,11 @@ app.post(
         notes,
       } = req.body;
 
-      // VALIDATION
-
       if (!stock) {
         return res.status(400).json({
           success: false,
-          message: "Stock is required",
+          message:
+            "Stock is required",
         });
       }
 
@@ -516,11 +529,10 @@ app.post(
       if (!date) {
         return res.status(400).json({
           success: false,
-          message: "Date is required",
+          message:
+            "Date is required",
         });
       }
-
-      // NUMBERS
 
       const entryNumber =
         Number(entry);
@@ -531,13 +543,9 @@ app.post(
       const quantityNumber =
         Number(quantity);
 
-      // CALCULATE PNL
-
       const calculatedPnl =
         (exitNumber - entryNumber) *
         quantityNumber;
-
-      // CALCULATE PERCENTAGE
 
       const calculatedPercentage =
         entryNumber !== 0
@@ -547,8 +555,6 @@ app.post(
               entryNumber
             ) * 100
           : 0;
-
-      // CREATE TRADE
 
       const trade =
         new Trade({
@@ -619,7 +625,6 @@ app.post(
         trade:
           savedTrade,
       });
-
     } catch (error) {
       console.log("");
       console.log(
@@ -631,13 +636,17 @@ app.post(
       console.log(
         "================================"
       );
+
       console.log(error);
 
       res.status(500).json({
         success: false,
+
         message:
           "Failed to add trade",
-        error: error.message,
+
+        error:
+          error.message,
       });
     }
   }
@@ -654,7 +663,8 @@ app.get(
     try {
       const trades =
         await Trade.find({
-          userId: req.user.userId,
+          userId:
+            req.user.userId,
         }).sort({
           createdAt: -1,
         });
@@ -662,7 +672,6 @@ app.get(
       res.status(200).json(
         trades
       );
-
     } catch (error) {
       console.log(
         "GET TRADES ERROR:",
@@ -671,9 +680,12 @@ app.get(
 
       res.status(500).json({
         success: false,
+
         message:
           "Failed to fetch trades",
-        error: error.message,
+
+        error:
+          error.message,
       });
     }
   }
@@ -707,6 +719,7 @@ app.get(
       const trade =
         await Trade.findOne({
           _id: id,
+
           userId:
             req.user.userId,
         });
@@ -723,7 +736,6 @@ app.get(
         success: true,
         trade,
       });
-
     } catch (error) {
       console.log(
         "GET SINGLE TRADE ERROR:",
@@ -732,9 +744,12 @@ app.get(
 
       res.status(500).json({
         success: false,
+
         message:
           "Failed to fetch trade",
-        error: error.message,
+
+        error:
+          error.message,
       });
     }
   }
@@ -760,6 +775,7 @@ app.delete(
       ) {
         return res.status(400).json({
           success: false,
+
           message:
             "Invalid trade ID",
         });
@@ -776,6 +792,7 @@ app.delete(
       if (!deletedTrade) {
         return res.status(404).json({
           success: false,
+
           message:
             "Trade not found",
         });
@@ -788,13 +805,13 @@ app.delete(
 
       res.status(200).json({
         success: true,
+
         message:
           "Trade deleted successfully",
 
         trade:
           deletedTrade,
       });
-
     } catch (error) {
       console.log(
         "DELETE ERROR:",
@@ -803,9 +820,12 @@ app.delete(
 
       res.status(500).json({
         success: false,
+
         message:
           "Failed to delete trade",
-        error: error.message,
+
+        error:
+          error.message,
       });
     }
   }
@@ -835,7 +855,6 @@ app.delete(
         deletedCount:
           result.deletedCount,
       });
-
     } catch (error) {
       console.log(
         "DELETE ALL ERROR:",
@@ -844,9 +863,12 @@ app.delete(
 
       res.status(500).json({
         success: false,
+
         message:
           "Failed to delete all trades",
-        error: error.message,
+
+        error:
+          error.message,
       });
     }
   }
@@ -872,6 +894,7 @@ app.put(
       ) {
         return res.status(400).json({
           success: false,
+
           message:
             "Invalid trade ID",
         });
@@ -890,6 +913,7 @@ app.put(
 
           {
             new: true,
+
             runValidators: true,
           }
         );
@@ -897,6 +921,7 @@ app.put(
       if (!updatedTrade) {
         return res.status(404).json({
           success: false,
+
           message:
             "Trade not found",
         });
@@ -911,7 +936,6 @@ app.put(
         trade:
           updatedTrade,
       });
-
     } catch (error) {
       console.log(
         "UPDATE ERROR:",
@@ -920,9 +944,12 @@ app.put(
 
       res.status(500).json({
         success: false,
+
         message:
           "Failed to update trade",
-        error: error.message,
+
+        error:
+          error.message,
       });
     }
   }
@@ -944,59 +971,7 @@ app.use(
 );
 
 // =====================================================
-// MONGODB
+// VERCEL EXPORT
 // =====================================================
 
-if (!process.env.MONGODB_URI) {
-  console.log(
-    "❌ MONGODB_URI is missing in .env"
-  );
-
-  process.exit(1);
-}
-
-mongoose
-  .connect(
-    process.env.MONGODB_URI
-  )
-
-  .then(() => {
-    console.log("");
-
-    console.log(
-      "========================================"
-    );
-
-    console.log(
-      "✅ MongoDB Connected Successfully"
-    );
-
-    console.log(
-      "========================================"
-    );
-
-    app.listen(
-      5000,
-      () => {
-        console.log(
-          "🚀 Server running at:"
-        );
-
-        console.log(
-          "http://localhost:5000"
-        );
-
-        console.log(
-          "========================================"
-        );
-      }
-    );
-  })
-
-  .catch((error) => {
-    console.log(
-      "❌ MongoDB Connection Failed"
-    );
-
-    console.log(error);
-  });
+module.exports = app;
