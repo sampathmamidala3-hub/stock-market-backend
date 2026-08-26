@@ -45,19 +45,39 @@ app.use(
 // MONGODB CONNECTION
 // =====================================================
 
-if (!process.env.MONGODB_URI) {
-  console.log("❌ MONGODB_URI is missing");
-} else {
-  mongoose
-    .connect(process.env.MONGODB_URI)
-    .then(() => {
-      console.log("✅ MongoDB Connected Successfully");
-    })
-    .catch((error) => {
-      console.log("❌ MongoDB Connection Failed");
-      console.log(error);
-    });
-}
+let isConnected = false;
+
+const connectDB = async () => {
+  // Already connected
+  if (isConnected && mongoose.connection.readyState === 1) {
+    return;
+  }
+
+  // Check environment variable
+  if (!process.env.MONGODB_URI) {
+    throw new Error("MONGODB_URI is missing");
+  }
+
+  try {
+    await mongoose.connect(process.env.MONGODB_URI);
+
+    isConnected = true;
+
+    console.log("================================");
+    console.log("✅ MongoDB Connected Successfully");
+    console.log("================================");
+
+  } catch (error) {
+    isConnected = false;
+
+    console.log("================================");
+    console.log("❌ MongoDB Connection Failed");
+    console.log("================================");
+    console.log(error.message);
+
+    throw error;
+  }
+};
 
 // =====================================================
 // AUTHENTICATION MIDDLEWARE
@@ -98,6 +118,7 @@ const authenticateToken = (req, res, next) => {
     req.user = decoded;
 
     next();
+
   } catch (error) {
     console.log(
       "AUTH ERROR:",
@@ -115,11 +136,23 @@ const authenticateToken = (req, res, next) => {
 // TEST ROUTE
 // =====================================================
 
-app.get("/", (req, res) => {
-  res.json({
-    success: true,
-    message: "Stock Market API is running 🚀",
-  });
+app.get("/", async (req, res) => {
+  try {
+    await connectDB();
+
+    res.json({
+      success: true,
+      message: "Stock Market API is running 🚀",
+      database: "connected",
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Stock Market API is running, but MongoDB is not connected",
+      error: error.message,
+    });
+  }
 });
 
 // =====================================================
@@ -128,6 +161,9 @@ app.get("/", (req, res) => {
 
 app.post("/register", async (req, res) => {
   try {
+    // Connect database before doing anything
+    await connectDB();
+
     const {
       name,
       email,
@@ -153,6 +189,7 @@ app.post("/register", async (req, res) => {
     const cleanEmail =
       email.trim().toLowerCase();
 
+    // Check existing user
     const existingUser =
       await User.findOne({
         email: cleanEmail,
@@ -165,12 +202,14 @@ app.post("/register", async (req, res) => {
       });
     }
 
+    // Hash password
     const hashedPassword =
       await bcrypt.hash(
         password,
         10
       );
 
+    // Create user
     const user =
       await User.create({
         name: name.trim(),
@@ -180,7 +219,8 @@ app.post("/register", async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: "Registration successful",
+      message:
+        "Registration successful",
 
       user: {
         id: user._id,
@@ -188,11 +228,10 @@ app.post("/register", async (req, res) => {
         email: user.email,
       },
     });
+
   } catch (error) {
-    console.log(
-      "REGISTER ERROR:",
-      error
-    );
+    console.log("REGISTER ERROR:");
+    console.log(error);
 
     res.status(500).json({
       success: false,
@@ -208,10 +247,24 @@ app.post("/register", async (req, res) => {
 
 app.post("/login", async (req, res) => {
   try {
+    console.log("");
+    console.log("================================");
+    console.log("LOGIN REQUEST");
+    console.log("================================");
+
+    // VERY IMPORTANT
+    // Connect MongoDB before searching user
+    await connectDB();
+
     const {
       email,
       password,
     } = req.body;
+
+    console.log(
+      "EMAIL:",
+      email
+    );
 
     if (!email || !password) {
       return res.status(400).json({
@@ -224,12 +277,17 @@ app.post("/login", async (req, res) => {
     const cleanEmail =
       email.trim().toLowerCase();
 
+    // Find user
     const user =
       await User.findOne({
         email: cleanEmail,
       });
 
     if (!user) {
+      console.log(
+        "USER NOT FOUND"
+      );
+
       return res.status(401).json({
         success: false,
         message:
@@ -237,6 +295,12 @@ app.post("/login", async (req, res) => {
       });
     }
 
+    console.log(
+      "USER FOUND:",
+      user.email
+    );
+
+    // Compare password
     const passwordMatch =
       await bcrypt.compare(
         password,
@@ -244,6 +308,10 @@ app.post("/login", async (req, res) => {
       );
 
     if (!passwordMatch) {
+      console.log(
+        "PASSWORD DOES NOT MATCH"
+      );
+
       return res.status(401).json({
         success: false,
         message:
@@ -251,6 +319,11 @@ app.post("/login", async (req, res) => {
       });
     }
 
+    console.log(
+      "PASSWORD MATCHED"
+    );
+
+    // Create JWT
     const token =
       jwt.sign(
         {
@@ -268,9 +341,15 @@ app.post("/login", async (req, res) => {
         }
       );
 
+    console.log(
+      "LOGIN SUCCESSFUL"
+    );
+
     res.json({
       success: true,
-      message: "Login successful",
+
+      message:
+        "Login successful",
 
       token,
 
@@ -280,11 +359,14 @@ app.post("/login", async (req, res) => {
         email: user.email,
       },
     });
+
   } catch (error) {
-    console.log(
-      "LOGIN ERROR:",
-      error
-    );
+    console.log("");
+    console.log("================================");
+    console.log("LOGIN ERROR");
+    console.log("================================");
+    console.log(error);
+    console.log("MESSAGE:", error.message);
 
     res.status(500).json({
       success: false,
@@ -295,7 +377,7 @@ app.post("/login", async (req, res) => {
 });
 
 // =====================================================
-// CHECK CURRENT USER
+// CURRENT USER
 // =====================================================
 
 app.get(
@@ -303,6 +385,8 @@ app.get(
   authenticateToken,
   async (req, res) => {
     try {
+      await connectDB();
+
       const user =
         await User.findById(
           req.user.userId
@@ -319,6 +403,7 @@ app.get(
         success: true,
         user,
       });
+
     } catch (error) {
       console.log(
         "ME ERROR:",
@@ -329,6 +414,8 @@ app.get(
         success: false,
         message:
           "Failed to get user",
+        error:
+          error.message,
       });
     }
   }
@@ -343,6 +430,8 @@ app.post(
   authenticateToken,
   async (req, res) => {
     try {
+      await connectDB();
+
       const {
         symbol,
         companyName,
@@ -364,7 +453,8 @@ app.post(
           userId:
             req.user.userId,
 
-          symbol,
+          symbol:
+            String(symbol).toUpperCase(),
 
           companyName,
 
@@ -385,6 +475,7 @@ app.post(
 
         stock,
       });
+
     } catch (error) {
       console.log(
         "ADD STOCK ERROR:",
@@ -395,7 +486,6 @@ app.post(
         success: false,
         message:
           "Failed to add stock",
-
         error:
           error.message,
       });
@@ -412,6 +502,8 @@ app.get(
   authenticateToken,
   async (req, res) => {
     try {
+      await connectDB();
+
       const stocks =
         await Stock.find({
           userId:
@@ -421,6 +513,7 @@ app.get(
         });
 
       res.json(stocks);
+
     } catch (error) {
       console.log(
         "GET STOCK ERROR:",
@@ -431,7 +524,6 @@ app.get(
         success: false,
         message:
           "Failed to fetch stocks",
-
         error:
           error.message,
       });
@@ -448,18 +540,13 @@ app.post(
   authenticateToken,
   async (req, res) => {
     try {
+      await connectDB();
+
       console.log("");
-      console.log(
-        "================================"
-      );
+      console.log("================================");
       console.log("NEW TRADE");
-      console.log(
-        "USER:",
-        req.user.userId
-      );
-      console.log(
-        "================================"
-      );
+      console.log("USER:", req.user.userId);
+      console.log("================================");
 
       console.log(req.body);
 
@@ -477,6 +564,7 @@ app.post(
         notes,
       } = req.body;
 
+      // Validation
       if (!stock) {
         return res.status(400).json({
           success: false,
@@ -534,6 +622,7 @@ app.post(
         });
       }
 
+      // Numbers
       const entryNumber =
         Number(entry);
 
@@ -543,18 +632,55 @@ app.post(
       const quantityNumber =
         Number(quantity);
 
-      const calculatedPnl =
-        (exitNumber - entryNumber) *
+      const chargesNumber =
+        charges === "" ||
+        charges === undefined
+          ? 0
+          : Number(charges);
+
+      // =================================================
+      // CORRECT BUY / SELL P&L
+      // =================================================
+
+      let calculatedPnl = 0;
+
+      if (
+        String(type).toUpperCase() ===
+        "SELL"
+      ) {
+        calculatedPnl =
+          (entryNumber - exitNumber) *
+          quantityNumber;
+      } else {
+        calculatedPnl =
+          (exitNumber - entryNumber) *
+          quantityNumber;
+      }
+
+      // Subtract charges
+      calculatedPnl =
+        calculatedPnl -
+        chargesNumber;
+
+      // =================================================
+      // PERCENTAGE
+      // =================================================
+
+      const investmentNumber =
+        entryNumber *
         quantityNumber;
 
       const calculatedPercentage =
-        entryNumber !== 0
+        investmentNumber !== 0
           ? (
-              (exitNumber -
-                entryNumber) /
-              entryNumber
+              calculatedPnl /
+              investmentNumber
             ) * 100
           : 0;
+
+      // =================================================
+      // CREATE TRADE
+      // =================================================
 
       const trade =
         new Trade({
@@ -562,10 +688,14 @@ app.post(
             req.user.userId,
 
           stock:
-            String(stock),
+            String(stock)
+              .trim()
+              .toUpperCase(),
 
           type:
-            String(type),
+            String(type)
+              .trim()
+              .toUpperCase(),
 
           entry:
             entryNumber,
@@ -580,10 +710,7 @@ app.post(
             new Date(date),
 
           charges:
-            charges === "" ||
-            charges === undefined
-              ? 0
-              : Number(charges),
+            chargesNumber,
 
           notes:
             notes || "",
@@ -591,8 +718,7 @@ app.post(
           investment:
             investment === "" ||
             investment === undefined
-              ? entryNumber *
-                quantityNumber
+              ? investmentNumber
               : Number(investment),
 
           pnl:
@@ -625,18 +751,12 @@ app.post(
         trade:
           savedTrade,
       });
+
     } catch (error) {
       console.log("");
-      console.log(
-        "================================"
-      );
-      console.log(
-        "ADD TRADE ERROR"
-      );
-      console.log(
-        "================================"
-      );
-
+      console.log("================================");
+      console.log("ADD TRADE ERROR");
+      console.log("================================");
       console.log(error);
 
       res.status(500).json({
@@ -661,6 +781,8 @@ app.get(
   authenticateToken,
   async (req, res) => {
     try {
+      await connectDB();
+
       const trades =
         await Trade.find({
           userId:
@@ -672,6 +794,7 @@ app.get(
       res.status(200).json(
         trades
       );
+
     } catch (error) {
       console.log(
         "GET TRADES ERROR:",
@@ -692,7 +815,7 @@ app.get(
 );
 
 // =====================================================
-// GET SINGLE USER TRADE
+// GET SINGLE TRADE
 // =====================================================
 
 app.get(
@@ -700,6 +823,8 @@ app.get(
   authenticateToken,
   async (req, res) => {
     try {
+      await connectDB();
+
       const {
         id,
       } = req.params;
@@ -736,6 +861,7 @@ app.get(
         success: true,
         trade,
       });
+
     } catch (error) {
       console.log(
         "GET SINGLE TRADE ERROR:",
@@ -756,7 +882,7 @@ app.get(
 );
 
 // =====================================================
-// DELETE USER TRADE
+// DELETE SINGLE TRADE
 // =====================================================
 
 app.delete(
@@ -764,6 +890,8 @@ app.delete(
   authenticateToken,
   async (req, res) => {
     try {
+      await connectDB();
+
       const {
         id,
       } = req.params;
@@ -812,6 +940,7 @@ app.delete(
         trade:
           deletedTrade,
       });
+
     } catch (error) {
       console.log(
         "DELETE ERROR:",
@@ -840,6 +969,8 @@ app.delete(
   authenticateToken,
   async (req, res) => {
     try {
+      await connectDB();
+
       const result =
         await Trade.deleteMany({
           userId:
@@ -855,6 +986,7 @@ app.delete(
         deletedCount:
           result.deletedCount,
       });
+
     } catch (error) {
       console.log(
         "DELETE ALL ERROR:",
@@ -883,6 +1015,8 @@ app.put(
   authenticateToken,
   async (req, res) => {
     try {
+      await connectDB();
+
       const {
         id,
       } = req.params;
@@ -936,6 +1070,7 @@ app.put(
         trade:
           updatedTrade,
       });
+
     } catch (error) {
       console.log(
         "UPDATE ERROR:",
